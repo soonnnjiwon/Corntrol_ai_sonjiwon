@@ -1,28 +1,32 @@
 import re
 import numpy as np
 import torch
-import gc
 from kiwipiepy import Kiwi
 from sentence_transformers import SentenceTransformer
 from sklearn.metrics.pairwise import cosine_similarity
 
 class RecordAnalyzer:
     def __init__(self):
-        # 1. 메모리 폭주 방지
         torch.set_num_threads(1)
         self.kiwi = Kiwi()
         
-        # 2. [필살기] 768차원이면서 몸집은 초경량인 ALBERT 모델 사용
-        # 이 모델은 768차원 벡터를 생성하며, 메모리를 아주 적게 먹습니다.
-        self.model_name = 'bongsoo/albert-small-kor-sbert-v1'
+        # 1. 512MB에서 유일하게 안정적인 'MiniLM' (384차원)
+        self.model_name = 'sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2'
         self.model = SentenceTransformer(self.model_name)
         
-        # 메모리 청소 (로딩 직후 불필요한 찌꺼기 제거)
-        gc.collect()
-
         self.candidate_labels = ["아이디어 & 프로젝트", "업무 & 학업", "자기계발 & 루틴", "경제 & 자산", "일상 & 취미","네트워킹 & 관계","감정 & 일기 회고"]
-        # 라벨 임베딩 (당연히 768차원입니다!)
-        self.label_embeddings = self.model.encode(self.candidate_labels)
+        
+        # 2. 라벨 임베딩도 768차원 모양으로 미리 변환 (Zero Padding)
+        raw_label_embeddings = self.model.encode(self.candidate_labels)
+        self.label_embeddings = self._make_768_dim(raw_label_embeddings)
+
+    def _make_768_dim(self, vector):
+        """384차원을 768차원으로 뻥튀기(패딩)하여 서영님 규격을 맞춥니다."""
+        v = np.array(vector)
+        if v.ndim == 1:
+            return np.pad(v, (0, 384), 'constant').tolist() # 뒤에 0을 384개 채움
+        else:
+            return np.pad(v, ((0, 0), (0, 384)), 'constant')
 
     def _preprocess(self, text):
         cleaned = re.sub(r'[^가-힣a-zA-Z0-9\s]', ' ', text)
@@ -31,25 +35,28 @@ class RecordAnalyzer:
     def analyze_all(self, text, threshold=0.15):
         cleaned_text = self._preprocess(text)
         if not cleaned_text:
-            return "새로운 줄기", [], [0.0] * 768 # 규격 유지
+            return "새로운 줄기", [], [0.0] * 768 # 규격 준수
             
         with torch.no_grad():
-            # 3. 768차원 임베딩 생성 (지원님의 로직 그대로!)
-            sentence_embedding = self.model.encode([cleaned_text])
-            sentence_embedding_list = sentence_embedding[0].tolist()
+            # 3. 분석은 384로 정확하게, 결과는 768로 안전하게!
+            raw_embedding = self.model.encode([cleaned_text])
+            padded_embedding = self._make_768_dim(raw_embedding)
+            sentence_embedding_list = padded_embedding[0].tolist() # 최종 768개 리스트
             
-            similarities = cosine_similarity(sentence_embedding, self.label_embeddings)[0]
+            # 유사도 계산 (모양이 같으므로 기존 로직 그대로 작동)
+            similarities = cosine_similarity(padded_embedding, self.label_embeddings)[0]
             best_idx = np.argmax(similarities)
             topic = self.candidate_labels[best_idx] if similarities[best_idx] >= threshold else "새로운 줄기"
             
-            # 키워드 추출 로직 유지
+            # 키워드 로직 보존
             analysis_result = self.kiwi.analyze(cleaned_text)
             candidates = list(set([t.form for t in analysis_result[0][0] if t.tag in ['NNG', 'NNP', 'SL']]))
             
             final_keywords = []
             if candidates:
-                word_embeddings = self.model.encode(candidates)
-                word_sims = cosine_similarity(sentence_embedding, word_embeddings)[0]
+                word_raw_embeddings = self.model.encode(candidates)
+                word_padded_embeddings = self._make_768_dim(word_raw_embeddings)
+                word_sims = cosine_similarity(padded_embedding, word_padded_embeddings)[0]
                 scored_candidates = sorted(zip(candidates, word_sims), key=lambda x: x[1], reverse=True)
                 
                 for word, score in scored_candidates:
