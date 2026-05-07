@@ -2,7 +2,5 @@ fastapi
 uvicorn
 sentence-transformers
 kiwipiepy
-scikit-learn
 numpy
---extra-index-url https://download.pytorch.org/whl/cpu
-torch
+torch --index-url https://download.pytorch.org/whl/cpu
