@@ -1,36 +1,40 @@
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
+from fastapi.concurrency import run_in_threadpool
 from analyzer import RecordAnalyzer
 
-# 1. FastAPI 앱 인스턴스 생성 (Render가 찾는 'app' 변수)
+# 1. FastAPI 앱 생성
 app = FastAPI()
 
 # 2. 분석기 초기화
 analyzer = RecordAnalyzer()
 
-# 3. 요청 데이터 규격 정의 (서영님 백엔드와 맞춘 규격)
+# 3. 데이터 규격 정의 (입력)
 class RecordRequest(BaseModel):
-    recordId: int      # 숫자형 필수
-    userId: str        # 문자열 필수
-    content: str       # 분석할 내용
+    recordId: int
+    userId: str
+    content: str
 
 @app.get("/")
 def read_root():
-    return {"message": "Corn-trol AI Server is Running!"}
+    return {"status": "running", "format": "snake_case"}
 
 @app.post("/analysis")
 async def analyze_record(request: RecordRequest):
     try:
-        # analyzer.py의 analyze_all 함수 호출
-        # 카테고리 분류가 더 잘 되도록 threshold를 0.05로 설정했습니다.
-        topic, keywords, embedding = analyzer.analyze_all(request.content, threshold=0.05)
+        # 분석 실행
+        topic, keywords, embedding = await run_in_threadpool(
+            analyzer.analyze_all, request.content
+        )
         
-        # 분석 결과 반환
         return {
             "recordId": request.recordId,
+            "userId": request.userId,
+            "content": request.content,
             "topic": topic,
             "keywords": keywords,
-            "sentence_embedding": embedding
+            "embedding": embedding
         }
     except Exception as e:
+        print(f"Error: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
