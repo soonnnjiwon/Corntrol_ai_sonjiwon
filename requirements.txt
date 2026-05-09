@@ -1,7 +1,5 @@
 fastapi
 uvicorn
-pydantic
-kiwipiepy
 sentence-transformers
+kiwipiepy
 numpy
-torch --index-url https://download.pytorch.org/whl/cpu
